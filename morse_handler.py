@@ -1,0 +1,449 @@
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+#libraries for design (PyQt5)
+from PyQt5 import QtWidgets, QtGui
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import Qt, QEventLoop, QThread, QObject, pyqtSlot, pyqtSignal
+
+#libraries for morse decoding
+import scipy.io.wavfile as wavfile
+import csv
+from numpy.fft import fft
+from matplotlib.pyplot import *
+from numpy import *
+
+
+
+class Convertor(QObject):
+    
+    run_trigger = pyqtSignal()
+    stop_trigger = pyqtSignal()
+
+    def __init__(self, widjet, lang, report=None):
+        super(Convertor, self).__init__()
+
+        self.run_trigger.connect(self.run)
+        self.stop_trigger.connect(self.stop)
+
+        self.widjet = widjet
+        self.path_to_csv = ["codes.csv", "RUcodes.csv"]
+        self.srFile = ""
+        self.lang = lang #True - RU, False - ENG
+        self.report = report
+        self.is_stopped = False
+        self.plotter = None
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            self.widjet.recv.emit("infoStart convertation")
+            self.plotter = DummyPlotter()
+            the_file, pulses, code_string = None, None, None
+            if not self.report is None: self.plotter = Plotter(self.report)
+            
+            if not self.is_stopped:
+                self.widjet.recv.emit("infoReading audio file...")
+                the_file = SoundFile(self, self.srFile)
+                the_file.saveplot("original")
+    
+            if not self.is_stopped:
+                self.widjet.recv.emit("infoFiltering...")
+                signalFilter = SignalFilter(self)
+                signalFilter.filter(the_file)
+                #the_file.saveas("filtered.wav")
+              
+            if not self.is_stopped:
+                self.widjet.recv.emit("infoPrerearing pulses...")
+                analyzer = SpectreAnalyzer(self)
+                pulses = analyzer.findpulses(the_file)
+            
+            if not self.is_stopped:
+                self.widjet.recv.emit("infoGeting Morse Pulses...")
+                pul_translator = PulsesTranslator()
+                code_string = pul_translator.tostring(pulses)
+                self.widjet.recv.emit("puls"+code_string)
+                
+            if not self.is_stopped:
+                self.widjet.recv.emit("infoReading audio file...")
+                str_translator = StringTranslator(self.lang, self.path_to_csv)
+                #print(code_string)
+                s = str_translator.totext(code_string)
+                self.widjet.recv.emit("mesg"+s)
+                #print(s)
+        except Exception as e:
+            print(e)
+            self.widjet.recv.emit("err")
+             
+        msg = "finished"
+        if self.is_stopped: msg = "force qiut"
+        self.widjet.recv.emit(msg)
+        
+
+
+    @pyqtSlot()
+    def stop(self):
+        self.is_stopped = True
+
+
+class Plotter:
+    def __init__(self, format="pdf"):
+        self.format=format
+
+    def saveplot(self, name, data, length=-1, height=-1, dpi=None):
+        plot(data)
+        if length != -1:
+            axis(xmax=length)
+        if height != -1:
+            axis(ymax=height)
+        savefig(name + "." + self.format, format=self.format, dpi=dpi)
+        cla()
+
+    def specgram(self, name, signal):
+        nfft = 1024#256  # Length of the windowing segments
+        fs = 44100#44100   # Sampling frequency
+        spectrogram = specgram(signal, NFFT=nfft, Fs=fs, noverlap=900, cmap=cm.gist_heat)
+        savefig(name + "." + self.format, format=self.format)
+        cla()
+        return spectrogram
+
+class DummyPlotter:
+    def saveplot(self, name, data, length=-1, height=-1, dpi=None):
+        return None
+
+    def specgram(self, name, signal):
+        nfft = 1024  # Length of the windowing segments
+        fs = 44100#44100   # Sampling frequency
+        #print(signal)
+        spectrogram = specgram(signal, NFFT=nfft, Fs=fs, noverlap=900, cmap=cm.gist_heat)
+        cla()
+        return spectrogram
+
+class SoundFile:
+
+    def __init__(self, handler, path):
+        #1 - leer el archivo con las muestras
+        #	el resultado de read es una tupla, el elemento 1 tiene las muestras
+        the_file = wavfile.read(path)
+        self.rate = the_file[0]
+        #print(self.rate)
+        self.length = len(the_file[1])
+        self.data = the_file[1]
+        self.handler = handler
+        # appendea ceros hasta completar una potencia de 2
+        power = 10
+        while pow(2,power) < self.length:
+            power += 1
+        #print(power)
+        self.data = append(self.data, zeros(pow(2,power) - self.length))
+	
+    def setdata(self, data):
+        self.data = data
+
+    def getdata(self):
+        return self.data
+
+    def getlength(self):
+        return self.length
+
+    def saveas(self, path):
+        wavfile.write(path, self.rate, self.data)
+
+    def saveplot(self, fileName):
+        self.handler.plotter.saveplot(fileName,self.data,length=self.length)
+
+
+class SignalFilter:
+    def __init__(self, handler):
+        self.handler = handler
+
+    def filter(self, soundfile):
+        #2 - aplico transformada de fourier
+        trans = fft.rfft(soundfile.getdata())
+        trans_real = abs(trans)
+	#2b - lo grafico
+        self.handler.plotter.saveplot("transformed",trans_real)
+	#3 - busco la frecuencia
+        band = 2000
+        # ignore the first 200Hz
+        hzignored = 200
+        frec = hzignored + argmax(trans_real[hzignored:])
+        #print( argmax(trans_real[hzignored:]))
+	#print( trans_real[frec])
+        #print( frec)
+        mn = int((frec - band / 2) if (frec > band / 2) else 0)
+        filter_array = append(zeros(mn), ones(band))
+        filter_array = append(filter_array, zeros(len(trans_real) - len(filter_array)))
+        filtered_array = multiply(trans, filter_array)
+        self.handler.plotter.saveplot("filtered_trans",abs(filtered_array))
+        #4 - antitransformo
+        filtered_signal = array(fft.irfft(filtered_array)[:soundfile.getlength()], dtype="int16")
+        self.handler.plotter.saveplot("filtered_signal",filtered_signal)
+        soundfile.setdata(filtered_signal)
+
+class SpectreAnalyzer:
+    def __init__(self, handler):
+        self.handler = handler
+
+    def spectrogram(self, signal):
+	#spectrogram = specgram(signal)
+	#savefig("spectrogram", format="pdf")
+	#cla()
+        spectrogram = self.handler.plotter.specgram("spectrogram", signal)
+        #print(signal)
+        return spectrogram
+
+    def sumarizecolumns(self, mat):
+        vec_ones = ones(len(mat))
+        vec_sum = (matrix(vec_ones) * matrix(mat)).transpose()
+        self.handler.plotter.saveplot("frecuency_volume",vec_sum)
+        return vec_sum
+
+    def findpresence(self, vec_sum):
+        presence = zeros(len(vec_sum))
+        threshold = mean(vec_sum)
+        #threshold = max(vec_sum) / 2.0
+        for i in range(len(presence)):
+            if vec_sum[i] > threshold:
+                presence[i] = 1
+        self.handler.plotter.saveplot("presence", presence, dpi=300, height=5)
+        return presence
+
+    def findpulses(self, soundfile):
+        spec = self.spectrogram(soundfile.getdata())
+        # spec[0] es la matriz del rojo
+        red_matrix = spec[0]
+        vec_sum = self.sumarizecolumns(red_matrix)
+        presence = self.findpresence(vec_sum)
+        return presence
+
+class ShortLong:
+    '''
+    def __init__(self, shorts, longs):
+        self.shortmean = mean(shorts)
+        self.shortstd = std(shorts)
+        self.longmean = mean(longs)
+        self.longstd = std(longs)
+        print("short: (" + repr(self.shortmean) + ", " + repr(self.shortstd) + ")\n\long: (" + repr(self.longmean) + ", " + repr(self.longstd) + ")")
+    '''
+    def __init__(self, shorts, longs):
+        print("short = "+str(len(shorts)))
+        print("long = "+str(len(longs)))
+        self.shortmean = around(mean(shorts))
+        self.shortstd = self.dev(shorts, self.shortmean)
+        self.longmean = around(mean(longs))
+        self.longstd = self.dev(longs, self.longmean)
+        #print("short: (" + repr(self.shortmean) + ", " + repr(self.shortstd) + ")\n\long: (" + repr(self.longmean) + ", " + repr(self.longstd) + ")")
+
+    def dev(self, vec, mean):
+        mx = max(vec)
+        mn = min(vec)
+        dev = mx - mean
+        if dev < mean - mn: dev = mean - mn
+        return dev
+    
+    def tostring(self):
+        return "short: (" + repr(self.shortmean) + ", " + repr(self.shortstd) + ")\n\long: (" + repr(self.longmean) + ", " + repr(self.longstd) + ")"
+
+class PulsesAnalyzer:
+        
+    def compress(self, pulses):
+        vec = []
+        i = 0
+                
+        if pulses[0] == 1:
+            vec += [0]
+            i = 1
+                
+        last = pulses[0]
+                
+        while i < len(pulses):
+            c = 0
+            last = pulses[i]
+            while i < len(pulses) and pulses[i] == last:
+                i += 1
+                c += 1
+            vec += [c]
+            i += 1
+                
+        vec = vec[1:-1]
+        return vec
+ 
+    def split(self, vec):
+        onesl = zeros(1+len(vec)//2)
+        zerosl = zeros(len(vec)//2)
+        for i in range(len(vec)//2):
+            onesl[i] = vec[2*i]
+            zerosl[i] = vec[2*i+1]
+        onesl[-1] = vec[-1]
+        return (onesl, zerosl)
+
+    '''
+    def findshortlongdup(self, vec):
+        sor = sort(vec)
+        print(sor)
+        last = sor[0]
+        for i in range(len(sor))[1:]:
+            if sor[i] > 2*last:
+                shorts = sor[:i-1]
+                longs = sor[i:]
+                return (shorts, longs)
+        return (vec, [])
+    '''
+    def findshortlongdup(self, vec):
+        sor = sort(vec)
+        print(sor)
+        dlt, step = 0, 0
+        for i in range(len(sor))[1:]:
+            if sor[i] - sor[i-1] > dlt:
+                dlt = sor[i] - sor[i-1]
+                step = i
+        print(step, sor[step])
+        shorts = sor[:step]
+        longs = sor[step:]
+        return (shorts, longs)
+
+    def createshortlong(self, shorts, longs):
+        return ShortLong(shorts, longs)
+
+    def findshortlong(self, vec):
+        dup = self.findshortlongdup(vec)
+        return self.createshortlong(dup[0], dup[1])
+
+class SymbolDecoder:
+    def __init__(self, onessl, zerossl, zeroextra=None):
+        self.onessl = onessl
+        self.zerossl = zerossl
+        self.zeroextra = zeroextra
+
+    def get(self, sl, n, ifshort, iflong, ifnone="?"):
+        '''
+        d = 4
+        if (n > sl.shortmean - d * sl.shortstd) and (n < sl.shortmean + d * sl.shortstd):
+            return ifshort
+        if (n > sl.longmean - d * sl.longstd) and (n < sl.longmean + d * sl.longstd):
+                return iflong
+        return ifnone
+        '''
+        #print(n)
+        if (n >= sl.shortmean -  sl.shortstd) and (n <= sl.shortmean + sl.shortstd):
+            return ifshort
+        if (n >= sl.longmean - sl.longstd) and (n <= sl.longmean + sl.longstd):
+                return iflong
+        return ifnone
+        
+        
+    def getonesymbol(self, n):
+        return self.get(self.onessl, n, ".", "-")
+        
+    def getzerosymbol(self, n):
+        sym = self.get(self.zerossl, n, "", " ")
+        if sym == "":
+            return sym
+        return self.get(self.zeroextra, n, " ", " | ", ifnone=" ")
+
+class PulsesTranslator:
+    def tostring(self, pulses):
+        pa = PulsesAnalyzer()
+        comp_vec = pa.compress(pulses)
+        #print(comp_vec)
+        '''
+        st = ""
+        for i in range(len(comp_vec)//2):
+            st += " " + str(comp_vec[2*i])
+            st += " !" + str(comp_vec[2*i + 1])
+        if len(comp_vec)%2:
+            st += " " + str(comp_vec[-1])
+        print(st)
+        '''
+        reas, i = [], 1
+        if comp_vec[0] < 20 and comp_vec[1] < 25 and com_vec[2] >= comp_vec[0]*3:
+            reas.append(comp_vec[0] + comp_vec[1] + comp_vec[2])
+            i = 3
+        else:
+            reas = [comp_vec[0]]
+        while i < len(comp_vec)-2:
+            if comp_vec[i] < 20:
+                if comp_vec[i+1] < 25:
+                    #print(i, comp_vec[i])
+                    if not i % 2 and comp_vec[i+2] >= comp_vec[i]*3:
+                        reas.append(comp_vec[i] + comp_vec[i+1] + comp_vec[i+2])
+                        i += 2
+                       
+                    elif i%2 and comp_vec[i-1] >= comp_vec[i+1]*3:
+                        reas[-1] = comp_vec[i-1] + comp_vec[i] + comp_vec[i+1]
+                        i += 1
+                    elif not i%2 and comp_vec[i-1] >= comp_vec[i+1]*3:
+                        reas.append(comp_vec[i] + comp_vec[i+1] + comp_vec[i+2])
+                        i += 2
+                        
+                else:
+                    reas.append(comp_vec[i])
+            else:
+                reas.append(comp_vec[i])
+            i += 1
+            
+        reas += comp_vec[-2:]
+        
+        if reas[-2] < 20 and reas[-1] < 25:
+            reas[-3] += reas[-2] + reas[-1]
+            reas = reas[:-2]
+        
+        #print(reas)
+        #print(comp_vec)
+                        
+                    
+        #comp_tup = pa.split(comp_vec)
+        comp_tup = pa.split(reas)
+        print("ones")
+        onessl = pa.findshortlong(comp_tup[0])
+        # zeros are subdivided
+        dup = pa.findshortlongdup(comp_tup[1])
+        dup2 = pa.findshortlongdup(dup[1])
+        print("zeros small")
+        zerossl = pa.createshortlong(dup[0], dup2[0])
+        print("zeros long")
+        zeroextra = pa.createshortlong(dup2[0], dup2[1])
+                
+        symdec = SymbolDecoder(onessl, zerossl, zeroextra)
+                
+        s = ""
+        for i in range(len(comp_vec)//2):
+            s += symdec.getonesymbol(comp_vec[2*i])
+            s += symdec.getzerosymbol(comp_vec[2*i+1])
+        s += symdec.getonesymbol(comp_vec[-1])
+        return s
+
+    def debris_elimin(self, vec):
+        pass
+
+class Codes:
+    def __init__(self, path):
+        data = csv.DictReader(open(path), delimiter=',', fieldnames=["char", "code"])
+        self.dic = {}
+        for entry in data:
+            self.dic[entry["code"]] = entry["char"]
+        
+    def tochar(self, code):
+        #if self.dic.has_key(code): #has_key was removed in Python3.x
+        if code in self.dic.keys():
+            return self.dic[code]
+        return "?"
+
+class StringTranslator:
+    def __init__(self, lang, path_to_csv):
+        self.lang = lang
+        self.path_to_csv = path_to_csv
+        self.codes = Codes(self.path_to_csv[lang])
+        
+
+    def totext(self, s):
+        text = ""
+        for code in s.split():
+            if code == "|":
+                char = " "
+            else:
+                char = self.codes.tochar(code)
+            text += char
+        return text
