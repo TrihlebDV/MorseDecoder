@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -13,6 +12,8 @@ import csv
 from numpy.fft import fft
 from matplotlib.pyplot import *
 from numpy import *
+
+import functions
 
 
 
@@ -52,11 +53,11 @@ class Convertor(QObject):
                 self.widjet.recv.emit("infoFiltering...")
                 signalFilter = SignalFilter(self)
                 signalFilter.filter(the_file)
-                #the_file.saveas("filtered.wav")
+                the_file.saveas("filtered.wav")
               
             if not self.is_stopped:
                 self.widjet.recv.emit("infoPrerearing pulses...")
-                analyzer = SpectreAnalyzer(self)
+                analyzer = SpectreAnalyzer(self, the_file.rate)
                 pulses = analyzer.findpulses(the_file)
             
             if not self.is_stopped:
@@ -129,6 +130,7 @@ class SoundFile:
         self.rate = the_file[0]
         #print(self.rate)
         self.length = len(the_file[1])
+        print("Rate: {}, length: {}".format(self.rate, self.length))
         self.data = the_file[1]
         self.handler = handler
         # appendea ceros hasta completar una potencia de 2
@@ -183,8 +185,10 @@ class SignalFilter:
         soundfile.setdata(filtered_signal)
 
 class SpectreAnalyzer:
-    def __init__(self, handler):
+    def __init__(self, handler, rate):
         self.handler = handler
+        self.rate = rate
+        self.functions = functions.Functions()
 
     def spectrogram(self, signal):
 	#spectrogram = specgram(signal)
@@ -197,17 +201,19 @@ class SpectreAnalyzer:
     def sumarizecolumns(self, mat):
         vec_ones = ones(len(mat))
         vec_sum = (matrix(vec_ones) * matrix(mat)).transpose()
-        self.handler.plotter.saveplot("frecuency_volume",vec_sum)
-        return vec_sum
+        self.handler.plotter.saveplot("frecuency_volume",vec_sum[:2000])
+        blur = self.functions.convBulr(vec_sum, self.rate)
+        self.handler.plotter.saveplot("f_blur",blur[:2000])
+        return blur#vec_sum
 
     def findpresence(self, vec_sum):
         presence = zeros(len(vec_sum))
-        threshold = mean(vec_sum)
-        #threshold = max(vec_sum) / 2.0
+        threshold = max(vec_sum) / 2.0
+        print(threshold, mean(vec_sum))
         for i in range(len(presence)):
             if vec_sum[i] > threshold:
                 presence[i] = 1
-        self.handler.plotter.saveplot("presence", presence, dpi=300, height=5)
+        self.handler.plotter.saveplot("presence", presence[-2000:], dpi=300, height=5)
         return presence
 
     def findpulses(self, soundfile):
@@ -228,8 +234,8 @@ class ShortLong:
         print("short: (" + repr(self.shortmean) + ", " + repr(self.shortstd) + ")\n\long: (" + repr(self.longmean) + ", " + repr(self.longstd) + ")")
     '''
     def __init__(self, shorts, longs):
-        print("short = "+str(len(shorts)))
-        print("long = "+str(len(longs)))
+        ###print("short = "+str(len(shorts)))
+        ###print("long = "+str(len(longs)))
         self.shortmean = around(mean(shorts))
         self.shortstd = self.dev(shorts, self.shortmean)
         self.longmean = around(mean(longs))
@@ -269,7 +275,7 @@ class PulsesAnalyzer:
                 
         vec = vec[1:-1]
         return vec
- 
+
     def split(self, vec):
         onesl = zeros(1+len(vec)//2)
         zerosl = zeros(len(vec)//2)
@@ -279,10 +285,9 @@ class PulsesAnalyzer:
         onesl[-1] = vec[-1]
         return (onesl, zerosl)
 
-    '''
     def findshortlongdup(self, vec):
         sor = sort(vec)
-        print(sor)
+        ###print(sor)
         last = sor[0]
         for i in range(len(sor))[1:]:
             if sor[i] > 2*last:
@@ -290,19 +295,6 @@ class PulsesAnalyzer:
                 longs = sor[i:]
                 return (shorts, longs)
         return (vec, [])
-    '''
-    def findshortlongdup(self, vec):
-        sor = sort(vec)
-        print(sor)
-        dlt, step = 0, 0
-        for i in range(len(sor))[1:]:
-            if sor[i] - sor[i-1] > dlt:
-                dlt = sor[i] - sor[i-1]
-                step = i
-        print(step, sor[step])
-        shorts = sor[:step]
-        longs = sor[step:]
-        return (shorts, longs)
 
     def createshortlong(self, shorts, longs):
         return ShortLong(shorts, longs)
@@ -347,63 +339,55 @@ class PulsesTranslator:
     def tostring(self, pulses):
         pa = PulsesAnalyzer()
         comp_vec = pa.compress(pulses)
-        #print(comp_vec)
-        '''
+        ###print(comp_vec)
         st = ""
         for i in range(len(comp_vec)//2):
             st += " " + str(comp_vec[2*i])
             st += " !" + str(comp_vec[2*i + 1])
-        if len(comp_vec)%2:
-            st += " " + str(comp_vec[-1])
+        st += " " + str(comp_vec[-1])
         print(st)
-        '''
-        reas, i = [], 1
-        if comp_vec[0] < 20 and comp_vec[1] < 25 and com_vec[2] >= comp_vec[0]*3:
-            reas.append(comp_vec[0] + comp_vec[1] + comp_vec[2])
-            i = 3
-        else:
-            reas = [comp_vec[0]]
-        while i < len(comp_vec)-2:
+
+        reas = [comp_vec[0]]
+        for i in range(len(comp_vec))[1:-2]:
             if comp_vec[i] < 20:
                 if comp_vec[i+1] < 25:
-                    #print(i, comp_vec[i])
+                    ###print(i, comp_vec[i])
                     if not i % 2 and comp_vec[i+2] >= comp_vec[i]*3:
                         reas.append(comp_vec[i] + comp_vec[i+1] + comp_vec[i+2])
                         i += 2
                        
-                    elif i%2 and comp_vec[i-1] >= comp_vec[i+1]*3:
-                        reas[-1] = comp_vec[i-1] + comp_vec[i] + comp_vec[i+1]
-                        i += 1
-                    elif not i%2 and comp_vec[i-1] >= comp_vec[i+1]*3:
-                        reas.append(comp_vec[i] + comp_vec[i+1] + comp_vec[i+2])
-                        i += 2
-                        
+                    else:
+                        if i%2 and comp_vec[i-1] >= comp_vec[i+1]*3:
+                            reas[-1] = comp_vec[i-1] + comp_vec[i] + comp_vec[i+1]
+                            i += 1
                 else:
                     reas.append(comp_vec[i])
             else:
                 reas.append(comp_vec[i])
             i += 1
-            
+
         reas += comp_vec[-2:]
         
+        if reas[0] < 20 and reas[1] < 25:
+            reas[2] += reas[0] + reas[1]
+            reas = reas[2:]
         if reas[-2] < 20 and reas[-1] < 25:
             reas[-3] += reas[-2] + reas[-1]
             reas = reas[:-2]
         
-        #print(reas)
-        #print(comp_vec)
+        ###print(reas)
+        ###print(comp_vec)
                         
                     
-        #comp_tup = pa.split(comp_vec)
-        comp_tup = pa.split(reas)
-        print("ones")
+        comp_tup = pa.split(comp_vec)
+        ###print("ones")
         onessl = pa.findshortlong(comp_tup[0])
         # zeros are subdivided
         dup = pa.findshortlongdup(comp_tup[1])
         dup2 = pa.findshortlongdup(dup[1])
-        print("zeros small")
+        ###print("zeros small")
         zerossl = pa.createshortlong(dup[0], dup2[0])
-        print("zeros long")
+        ###print("zeros long")
         zeroextra = pa.createshortlong(dup2[0], dup2[1])
                 
         symdec = SymbolDecoder(onessl, zerossl, zeroextra)
