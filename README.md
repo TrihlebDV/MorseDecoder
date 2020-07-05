@@ -1,6 +1,7 @@
 # MorseDecoder
 
-1. Description and Modes
+1. Description and Modese
+
     This application is intended for converting audio recordings of Morse code to text.
     
     There is a possibility for audio source: 
