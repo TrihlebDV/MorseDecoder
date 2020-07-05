@@ -15,6 +15,8 @@ from numpy import *
 
 import functions
 
+DEBUG = True
+#DEBUG = False
 
 
 class Convertor(QObject):
@@ -29,6 +31,7 @@ class Convertor(QObject):
         self.stop_trigger.connect(self.stop)
 
         self.widjet = widjet
+        self.functions = functions.Functions(DEBUG)
         self.path_to_csv = ["codes.csv", "RUcodes.csv"]
         self.srFile = ""
         self.lang = lang #True - RU, False - ENG
@@ -39,10 +42,13 @@ class Convertor(QObject):
     @pyqtSlot()
     def run(self):
         try:
+            if DEBUG: print("debug mode turn ON")
             self.widjet.recv.emit("infoStart convertation")
             self.plotter = DummyPlotter()
             the_file, pulses, code_string = None, None, None
-            if not self.report is None: self.plotter = Plotter(self.report)
+            if not self.report is None:
+                self.plotter = Plotter(self.report)
+                if DEBUG: print("grafical OUPUT turn ON")
             
             if not self.is_stopped:
                 self.widjet.recv.emit("infoReading audio file...")
@@ -63,7 +69,7 @@ class Convertor(QObject):
             if not self.is_stopped:
                 self.widjet.recv.emit("infoGeting Morse Pulses...")
                 pul_translator = PulsesTranslator()
-                code_string = pul_translator.tostring(pulses)
+                code_string = pul_translator.tostring(self, pulses)
                 self.widjet.recv.emit("puls"+code_string)
                 
             if not self.is_stopped:
@@ -130,7 +136,7 @@ class SoundFile:
         self.rate = the_file[0]
         #print(self.rate)
         self.length = len(the_file[1])
-        print("Rate: {}, length: {}".format(self.rate, self.length))
+        if DEBUG: print("Rate: {}, length: {}".format(self.rate, self.length))
         self.data = the_file[1]
         self.handler = handler
         # appendea ceros hasta completar una potencia de 2
@@ -188,7 +194,7 @@ class SpectreAnalyzer:
     def __init__(self, handler, rate):
         self.handler = handler
         self.rate = rate
-        self.functions = functions.Functions()
+        
 
     def spectrogram(self, signal):
 	#spectrogram = specgram(signal)
@@ -201,19 +207,20 @@ class SpectreAnalyzer:
     def sumarizecolumns(self, mat):
         vec_ones = ones(len(mat))
         vec_sum = (matrix(vec_ones) * matrix(mat)).transpose()
-        self.handler.plotter.saveplot("frecuency_volume",vec_sum[:2000])
-        blur = self.functions.convBulr(vec_sum, self.rate)
-        self.handler.plotter.saveplot("f_blur",blur[:2000])
+        self.handler.plotter.saveplot("frecuency_volume",vec_sum[250:800])
+        blur = self.handler.functions.convBulr(vec_sum, self.rate)
+        self.handler.plotter.saveplot("f_blur",blur[250:800])
         return blur#vec_sum
 
     def findpresence(self, vec_sum):
         presence = zeros(len(vec_sum))
-        threshold = max(vec_sum) / 2.0
-        print(threshold, mean(vec_sum))
+        #threshold = max(vec_sum) / 2.0
+        threshold = mean(vec_sum)
+        if DEBUG: print("treshhold: {}, mean: {}".format(threshold, mean(vec_sum)))
         for i in range(len(presence)):
             if vec_sum[i] > threshold:
                 presence[i] = 1
-        self.handler.plotter.saveplot("presence", presence[-2000:], dpi=300, height=5)
+        self.handler.plotter.saveplot("presence", presence[250:800], dpi=300, height=5)
         return presence
 
     def findpulses(self, soundfile):
@@ -336,59 +343,34 @@ class SymbolDecoder:
         return self.get(self.zeroextra, n, " ", " | ", ifnone=" ")
 
 class PulsesTranslator:
-    def tostring(self, pulses):
+    def tostring(self, handler, pulses):
         pa = PulsesAnalyzer()
         comp_vec = pa.compress(pulses)
-        ###print(comp_vec)
-        st = ""
-        for i in range(len(comp_vec)//2):
-            st += " " + str(comp_vec[2*i])
-            st += " !" + str(comp_vec[2*i + 1])
-        st += " " + str(comp_vec[-1])
-        print(st)
-
-        reas = [comp_vec[0]]
-        for i in range(len(comp_vec))[1:-2]:
-            if comp_vec[i] < 20:
-                if comp_vec[i+1] < 25:
-                    ###print(i, comp_vec[i])
-                    if not i % 2 and comp_vec[i+2] >= comp_vec[i]*3:
-                        reas.append(comp_vec[i] + comp_vec[i+1] + comp_vec[i+2])
-                        i += 2
-                       
-                    else:
-                        if i%2 and comp_vec[i-1] >= comp_vec[i+1]*3:
-                            reas[-1] = comp_vec[i-1] + comp_vec[i] + comp_vec[i+1]
-                            i += 1
-                else:
-                    reas.append(comp_vec[i])
-            else:
-                reas.append(comp_vec[i])
-            i += 1
-
-        reas += comp_vec[-2:]
-        
-        if reas[0] < 20 and reas[1] < 25:
-            reas[2] += reas[0] + reas[1]
-            reas = reas[2:]
-        if reas[-2] < 20 and reas[-1] < 25:
-            reas[-3] += reas[-2] + reas[-1]
-            reas = reas[:-2]
+        if DEBUG:
+            ###print(comp_vec)
+            st = ""
+            for i in range(len(comp_vec)//2):
+                st += " " + str(comp_vec[2*i])
+                st += " !" + str(comp_vec[2*i + 1])
+            st += " " + str(comp_vec[-1])
+            print(st)
         
         ###print(reas)
-        ###print(comp_vec)
-                        
-                    
+        ###print(len(comp_vec))
         comp_tup = pa.split(comp_vec)
-        ###print("ones")
-        onessl = pa.findshortlong(comp_tup[0])
+           
+        if DEBUG: print("\nones")
+        #onessl = pa.findshortlong(comp_tup[0])
+        th_ones = handler.functions.division(comp_tup[0], True)
         # zeros are subdivided
-        dup = pa.findshortlongdup(comp_tup[1])
-        dup2 = pa.findshortlongdup(dup[1])
+        if DEBUG: print("\nzeros")
+        th_zeros = handler.functions.division(comp_tup[1], False)
+        #dup = pa.findshortlongdup(comp_tup[1])
+        #dup2 = pa.findshortlongdup(dup[1])
         ###print("zeros small")
-        zerossl = pa.createshortlong(dup[0], dup2[0])
+        #zerossl = pa.createshortlong(dup[0], dup2[0])
         ###print("zeros long")
-        zeroextra = pa.createshortlong(dup2[0], dup2[1])
+        #zeroextra = pa.createshortlong(dup2[0], dup2[1])
                 
         symdec = SymbolDecoder(onessl, zerossl, zeroextra)
                 

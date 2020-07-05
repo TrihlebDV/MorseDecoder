@@ -174,6 +174,10 @@ class ChooseWin(QtWidgets.QWidget, lang_source.Ui_Form):
         self.btnColorUpdate()
 
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Enter or event.key() == Qt.Key_Return:
+            if self.btnDict["ru_button"]^self.btnDict["eng_button"]:
+                if self.btnDict["record_button"]^self.btnDict["file_button"]:
+                    self.countinue()
         if event.key() == Qt.Key_Escape:
             reply = QtWidgets.QMessageBox.question(self, 'Action', "Return to\nStart window?",
                                                   QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
@@ -401,6 +405,9 @@ class ResCalc(QtWidgets.QWidget, output.Ui_Form):
             
 
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Enter or event.key() == Qt.Key_Return:
+            if not self.is_process: self.presHandl()
+
         if event.key() == Qt.Key_Escape:
             if self.is_process:
                 reply = QtWidgets.QMessageBox.question(self, 'Action', "Do you want to stop recording\nand\nreturn to Start window?",
