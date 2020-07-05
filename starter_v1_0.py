@@ -4,6 +4,10 @@
 #add path with necessary files to python
 import sys, os
 
+path = os.path.abspath(__file__)
+curdir = os.path.dirname(path)
+print(curdir)
+sys.path.insert(0, curdir + '/libraries')
 
 #import necessary libraries for initiating Qt_object
 from PyQt5 import QtWidgets, QtGui
@@ -23,7 +27,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.init_win = forms.InitWindow(self, self.pr_handler, self.pos)
         self.choose_win = forms.ChooseWin(self.pr_handler, self.pos)
         self.record_win = forms.RecordWin(self.pr_handler, self.pos)
-        self.resCalc = forms.ResCalc(self.pr_handler, self.pos)
+        self.resCalc = forms.ResCalc(self.pr_handler, self.pos, curdir)
         
         self.langSet = 1  # 1 - RU, 0 - ENG
 
