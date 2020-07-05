@@ -17,8 +17,8 @@ import sys, os
 
 import functions
 
-DEBUG = True
-#DEBUG = False
+#DEBUG = True
+DEBUG = False
 
 
 class Convertor(QObject):

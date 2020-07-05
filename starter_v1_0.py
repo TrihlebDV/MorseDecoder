@@ -6,7 +6,6 @@ import sys, os
 
 path = os.path.abspath(__file__)
 curdir = os.path.dirname(path)
-print(curdir)
 sys.path.insert(0, curdir + '/libraries')
 
 #import necessary libraries for initiating Qt_object
