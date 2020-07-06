@@ -50,7 +50,6 @@ class Functions():
                 mn = np.mean(sort[:el]) + 1
                 #dlt = self.div_a*mn + self.div_b
                 if dif[el] > mn/2:# and dif[el+1] < dif[el]:
-                    print(el, dif[el])
                     tresh.append(sort[el])
                     break
         else:
@@ -59,12 +58,10 @@ class Functions():
                 mn = np.mean(sort[:el])
                 #dlt = self.div_a*mn + self.div_b
                 if dif[el] > mn*1.5 and dif[el+1] < dif[el]:
-                    print(el)
                     tresh.append(sort[el])
                     break
             for el in reversed(range(len(dif))): 
                 if dif[el] > mn:
-                    print(el)
                     tresh.append(sort[el+1])
                     break
         if self.debug: print(tresh)
