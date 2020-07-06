@@ -8,6 +8,8 @@ from PyQt5.QtCore import Qt, QEventLoop, QThread, QObject, pyqtSlot, pyqtSignal
 
 #libraries for morse decoding
 import scipy.io.wavfile as wavfile
+import pydub
+from pydub import pyaudioop
 import csv
 from numpy.fft import fft
 from matplotlib.pyplot import *
@@ -137,12 +139,17 @@ class SoundFile:
     def __init__(self, handler, path):
         #1 - leer el archivo con las muestras
         #	el resultado de read es una tupla, el elemento 1 tiene las muestras
-        the_file = wavfile.read(path)
-        self.rate = the_file[0]
-        #print(self.rate)
-        self.length = len(the_file[1])
+        if path[-3:] == "mp3":
+            the_file = pydub.AudioSegment.from_mp3(path)
+            self.rate = the_file.frame_rate
+            self.data = the_file.get_array_of_samples()
+            self.length = len(self.data)
+        elif path[-3:] == "wav":
+            the_file = wavfile.read(path)
+            self.rate = the_file[0]
+            self.length = len(the_file[1])
+            self.data = the_file[1]
         if DEBUG: print("Rate: {}, length: {}".format(self.rate, self.length))
-        self.data = the_file[1]
         self.handler = handler
         # appendea ceros hasta completar una potencia de 2
         power = 10
